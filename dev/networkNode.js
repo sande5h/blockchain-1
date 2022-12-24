@@ -1,47 +1,130 @@
 var express = require('express');
 var app = express();
-
 const bodyParser = require('body-parser');
 const Blockchain = require('./blockchain');
-const coin = new Blockchain();
+const coin= new Blockchain();
 
 const rp = require('request-promise');
+const { response } = require('express');
 
 const port = process.argv[2];
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 
-
+//creating blockchain endpoint
 app.get('/blockchain', function (req, res) {
     res.send(coin);
 });
 
-app.post('/transaction', function (req, res) {
-    const blockIndex = coin.createNewTransaction(req.body.amount, req.body.sender, req.body.recipient);
-    res.json({ note: `Transaction will be added in the block ${blockIndex}` });
+//creating transaction endpoint
+// app.post('/transaction', function (req, res) {
+//     const blockIndex = coin.createNewTransaction(req.body.amount, req.body.sender, req.body.recipient);
+//     res.json({ note: `Transaction will be added in the block ${blockIndex}` });
+// });
 
+// refactoring transaction endpoint
+app.post('/transaction', function (req, res) {
+    const newTransaction = req.body;
+    const blockIndex = coin.addTransactionToPendingTransactions(newTransaction);
+    res.json({ note: `Transaction will be added in block ${blockIndex}` });
 });
 
+app.post('/transaction/broadcast', function (req, res) {
+    const newTransaction = coin.createNewTransaction(req.body.amount, req.body.sender, req.body.recipient);
+    coin.addTransactionToPendingTransactions(newTransaction);
+    const requestPromises = [];
+    coin.networkNodes.forEach(networkNodeUrl => {
+        const requestOptions = {
+            uri: networkNodeUrl + '/transaction',
+            method: 'POST',
+            body: newTransaction,
+            json: true
+        };
+        requestPromises.push(rp(requestOptions));
+    });
+    Promise.all(requestPromises)
+        .then(data => {
+            res.json({ note: "Transaction created and broadcasted successfully!" });
+        });
+});
+
+// creating mining endpoint
+// app.get('/mine', function (req, res) {
+//     const lastBlock = coin.getLastBlock();
+//     const previousBlockHash = lastBlock['hash'];
+//     const currentBlockData = {
+//         index: lastBlock['index'] + 1,
+//         transactions: coin.pendingTransactions
+//     };
+//     const nonce = coin.proofOfWork(previousBlockHash, currentBlockData);
+//     const blockHash = coin.hashBlock(previousBlockHash, currentBlockData, nonce);
+//     const newBlock = coin.createNewBlock(nonce, previousBlockHash, blockHash);
+//     res.json({
+//         note: "New block has been created!",
+//         block: newBlock
+//     });
+// });
+
+//updating mine information
 app.get('/mine', function (req, res) {
     const lastBlock = coin.getLastBlock();
     const previousBlockHash = lastBlock['hash'];
+
     const currentBlockData = {
         index: lastBlock['index'] + 1,
         transactions: coin.pendingTransactions
     };
+
     const nonce = coin.proofOfWork(previousBlockHash, currentBlockData);
     const blockHash = coin.hashBlock(previousBlockHash, currentBlockData, nonce);
+    coin.candidate.push(coin.pendingTransactions);
     const newBlock = coin.createNewBlock(nonce, previousBlockHash, blockHash);
-    res.json({
-        note: "New block has been created!",
-        block: newBlock
+  
+
+    const requestPromises = [];
+    coin.networkNodes.forEach(networkNodeUrl => {
+        const requestOptions = {
+            uri: networkNodeUrl + '/receive-new-block',
+            method: 'POST',
+            body: { newBlock: newBlock },
+            json: true
+        };
+        requestPromises.push(rp(requestOptions));
     });
+    Promise.all(requestPromises)
+        .then(data => {
+            res.json({
+                note: "New Block Mined  and broadcast Successfully!",
+                block: newBlock
+            });
+        });
 });
 
+app.post('/receive-new-block', function (req, res) {
+    const newBlock = req.body.newBlock;
+    const lastBlock = coin.getLastBlock();
+    // console.log(`last block index =  ${lastBlock}`);
+    const correctHash = lastBlock.hash === newBlock.previousBlockHash;
+    const correctIndex = lastBlock['index'] + 1 === newBlock['index'];
+    
+    if (correctHash && correctIndex) {
+        coin.chain.push(newBlock);
+        coin.candidate.push(coin.pendingTransactions);
+        coin.pendingTransactions = [];
+        res.json({
+            note: 'New Block received and accepted',
+            newBlock: newBlock
+        });
+    } else {
+        console.log("block rejected")
+        res.json({ note: 'New Block Rejected' });
+    }
+});
+// connecting nodes to each other
+// New Edndpoints Outline
+// register a node and broadcast to a network
 
-
-//register node and boradcast that node to the entire network
 app.post('/register-broadcast', function (req, res) {
     const newNodeUrl = req.body.newNodeUrl;
     if (coin.networkNodes.indexOf(newNodeUrl) == -1) coin.networkNodes.push(newNodeUrl);
@@ -51,49 +134,46 @@ app.post('/register-broadcast', function (req, res) {
         const requestOptions = {
             uri: networkNodeUrl + '/register-node',
             method: 'POST',
-            body: {
-                newNodeUrl: newNodeUrl
-            },
+            body: { newNodeUrl: newNodeUrl },
             json: true
         };
         regNodesPromises.push(rp(requestOptions));
     });
     Promise.all(regNodesPromises)
         .then(data => {
-            const bulkRegisterOption = {
+            const bulkRegisterOptions = {
                 uri: newNodeUrl + '/register-nodes-bulk',
                 method: 'POST',
-                body: {
-                    allNetworkNodes: [...coin.networkNodes, coin.currentNodeUrl]
-                },
+                body: { allNetworkNodes: [...coin.networkNodes, coin.currentNodeUrl] },
                 json: true
             };
-            return rp(bulkRegisterOption);
+            return rp(bulkRegisterOptions);
         })
         .then(data => {
-            res.json({ note: "new node registered with network" });
-        })
+            res.json({ note: 'new node registered in network successfully !' });
+        });
 });
 
-// register a node with the network
+// register a node with a netwrok
 app.post('/register-node', function (req, res) {
     const newNodeUrl = req.body.newNodeUrl;
     const nodeNotAlreadyPresent = coin.networkNodes.indexOf(newNodeUrl) == -1;
-    const noteCurrentNode = coin.currentNodeUrl !== newNodeUrl;
-    if (nodeNotAlreadyPresent && noteCurrentNode) coin.networkNodes.push(newNodeUrl);
-    res.json({ note: 'new node registered' });
+    const notCurrentNode = coin.currentNodeUrl !== newNodeUrl;
+    if (nodeNotAlreadyPresent && notCurrentNode) coin.networkNodes.push(newNodeUrl);
+    res.json({ note: "new node registered successfully" });
 });
 
-//register multiple nodes at once to newNode
+// register multiple nodes at once
 app.post('/register-nodes-bulk', function (req, res) {
     const allNetworkNodes = req.body.allNetworkNodes;
     allNetworkNodes.forEach(networkNodeUrl => {
         const nodeNotAlreadyPresent = coin.networkNodes.indexOf(networkNodeUrl) == -1;
-        const noteCurrentNode = coin.currentNodeUrl !== networkNodeUrl;
-        if (nodeNotAlreadyPresent && noteCurrentNode) coin.networkNodes.push(networkNodeUrl);
+        const notCurrentNode = coin.currentNodeUrl !== networkNodeUrl;
+        if (nodeNotAlreadyPresent && notCurrentNode) coin.networkNodes.push(networkNodeUrl);
     });
-
+    res.json({ note: 'Bulk registration of nodes successful!' });
 });
+
 
 
 app.listen(port, function () {

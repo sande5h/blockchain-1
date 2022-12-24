@@ -1,5 +1,7 @@
 const sha256 = require('sha256'); //importing sha256 hashing
 const currentNodeUrl = process.argv[3];
+// const uuid = require('uuidv4');
+
 
 // defining blockcahin structure
 function Blockchain() {
@@ -8,6 +10,7 @@ function Blockchain() {
     this.createNewBlock(100, '0', '0');
     this.currentNodeUrl = currentNodeUrl;
     this.networkNodes = [];
+    this.candidate = [];
 }
 
 
@@ -31,15 +34,34 @@ Blockchain.prototype.getLastBlock = function () {
 }
 
 
+// Blockchain.prototype.createNewTransaction = function (amount, sender, recipient) {
+//     const newTransaction = {
+//         amount: amount,
+//         sender: sender,
+//         recipient: recipient
+//     };
+//     this.pendingTransactions.push(newTransaction);
+//     return this.getLastBlock()['index'] + 1;
+// }
+
+//refactoring createTransaction
 Blockchain.prototype.createNewTransaction = function (amount, sender, recipient) {
     const newTransaction = {
         amount: amount,
         sender: sender,
         recipient: recipient
+        // transactionsId: uuid().split('_').join('')
+
     };
-    this.pendingTransactions.push(newTransaction);
+    return newTransaction;
+}
+
+Blockchain.prototype.addTransactionToPendingTransactions = function (transactionObj) {
+    this.pendingTransactions.push(transactionObj);
     return this.getLastBlock()['index'] + 1;
 }
+
+
 
 
 Blockchain.prototype.hashBlock = function (previousBlockHash, currentBlockData, nonce) {
