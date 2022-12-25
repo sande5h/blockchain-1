@@ -2,7 +2,7 @@ var express = require('express');
 var app = express();
 const bodyParser = require('body-parser');
 const Blockchain = require('./blockchain');
-const coin= new Blockchain();
+const coin = new Blockchain();
 
 const rp = require('request-promise');
 const { response } = require('express');
@@ -80,7 +80,7 @@ app.get('/mine', function (req, res) {
     const blockHash = coin.hashBlock(previousBlockHash, currentBlockData, nonce);
     coin.candidate.push(coin.pendingTransactions);
     const newBlock = coin.createNewBlock(nonce, previousBlockHash, blockHash);
-  
+
 
     const requestPromises = [];
     coin.networkNodes.forEach(networkNodeUrl => {
@@ -107,7 +107,7 @@ app.post('/receive-new-block', function (req, res) {
     // console.log(`last block index =  ${lastBlock}`);
     const correctHash = lastBlock.hash === newBlock.previousBlockHash;
     const correctIndex = lastBlock['index'] + 1 === newBlock['index'];
-    
+
     if (correctHash && correctIndex) {
         coin.chain.push(newBlock);
         coin.candidate.push(coin.pendingTransactions);
@@ -174,6 +174,55 @@ app.post('/register-nodes-bulk', function (req, res) {
     res.json({ note: 'Bulk registration of nodes successful!' });
 });
 
+app.get('/consensus', function (req, res) {
+    const requestPromises = [];
+    coin.networkNodes.forEach(networkNodeUrl => {
+        const requestOptions = {
+            uri: networkNodeUrl + '/blockchain',
+            method: 'GET',
+            json: true
+        }
+        requestPromises.push(rp(requestOptions));
+    });
+    Promise.all(requestPromises)
+        .then(blockchains => {
+            const currentChainLength = coin.chain.length;
+            let maxChainLength = currentChainLength;
+            let newLongestChain = null;
+            let newPendingTransactions = null;
+            let newCandidate = coin.candidate;
+            blockchains.forEach(blockchain => {
+                if (blockchain.chain.length > maxChainLength) {
+                    maxChainLength = blockchain.chain.length;
+                    newLongestChain = blockchain.chain;
+                    newPendingTransactions = blockchain.pendingTransactions;
+                    // console.log( coin.chainIsValid(newLongestChain));
+                    // newLongestChain.forEach(longeshchain =>{
+                    //     console.log(longeshchain);
+                    // })
+                    // console.log( newLongestChain && coin.chainIsValid(newLongestChain));
+                };
+            });
+
+
+            if (!newLongestChain || (newLongestChain && !coin.chainIsValid(newLongestChain))) {
+                res.json({
+                    note: 'current chain has not been replaced ',
+                    chain: coin.chain
+                })
+            }
+            else if (newLongestChain && coin.chainIsValid(newLongestChain)) {
+                coin.chain = newLongestChain;
+                coin.newPendingTransactions = newPendingTransactions;
+                coin.candidate = newCandidate;
+                res.json({
+                    note: 'this chain hass been replaced',
+                    chain: coin.chain
+                })
+            }
+
+        });
+});
 
 
 app.listen(port, function () {
